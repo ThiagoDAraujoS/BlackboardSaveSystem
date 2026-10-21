@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BlackboardSaveSystem — Unity RAII Save &amp; State Framework</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <!-- Top Navigation -->
+  <header class="navbar">
+    <a href="#" class="navbar-brand">
+      <span>BlackboardSaveSystem</span>
+      <span class="badge">Unity C# Module</span>
+    </a>
+    <nav class="navbar-links">
+      <a href="#installation">Installation</a>
+      <a href="#how-to-use">How to Use</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#api-blackboard">API Reference</a>
+      <a href="https://github.com/ThiagoDAraujoS/BlackboardSaveSystem" target="_blank" rel="noopener">GitHub Repository ↗</a>
+    </nav>
+  </header>
+
+  <div class="layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="sidebar-group">
+        <div class="sidebar-title">Getting Started</div>
+        <ul class="sidebar-nav">
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#installation">1. Installation (UPM &amp; Git)</a></li>
+          <li><a href="#manager-setup">2. Manager Setup</a></li>
+          <li><a href="#scene-scopes">3. Scene Save Scopes</a></li>
+          <li><a href="#entity-binding">4. Entity State Binding</a></li>
+          <li><a href="#custom-components">5. Custom State Components</a></li>
+          <li><a href="#saving-sessions">6. Saving &amp; Metadata</a></li>
+        </ul>
+      </div>
+
+      <div class="sidebar-group">
+        <div class="sidebar-title">System Architecture</div>
+        <ul class="sidebar-nav">
+          <li><a href="#architecture">4-Level Data Partitioning</a></li>
+          <li><a href="#raii-lifecycle">RAII &amp; Event Lifecycle</a></li>
+          <li><a href="#execution-order">Execution Order &amp; Assemblies</a></li>
+        </ul>
+      </div>
+
+      <div class="sidebar-group">
+        <div class="sidebar-title">C# API Reference</div>
+        <ul class="sidebar-nav">
+          <li><a href="#api-blackboard">Blackboard &amp; BlackboardFile</a></li>
+          <li><a href="#api-savesystem">SaveSystem &amp; SaveFileMetadata</a></li>
+          <li><a href="#api-scope">BlackboardScope</a></li>
+          <li><a href="#api-client">BlackboardClient &amp; IBoundState</a></li>
+          <li><a href="#api-tracked">TrackedBehaviour &amp; Tracked&lt;T&gt;</a></li>
+          <li><a href="#api-transform">TrackedTransform</a></li>
+          <li><a href="#api-uniqueid">UniqueId</a></li>
+        </ul>
+      </div>
+    </aside>
+
+    <!-- Main Documentation Content -->
+    <main class="content">
+
+      <!-- Hero Banner -->
+      <div class="hero" id="overview">
+        <h1>BlackboardSaveSystem</h1>
+        <p>
+          A decoupled, high-performance RAII save and state management framework for Unity. Designed with deterministic 4-level state partitioning, reference-counted <code>BlackboardFile</code> lifecycles, and zero-allocation gameplay state decorators via <code>Tracked&lt;T&gt;</code>.
+        </p>
+        <div class="feature-grid">
+          <div class="feature-card">
+            <h3>4-Level Partitioning</h3>
+            <p>Deterministic hierarchy: <code>fileName &rarr; entityId &rarr; componentId &rarr; variableName &rarr; value</code>.</p>
+          </div>
+          <div class="feature-card">
+            <h3>RAII Smart Pointers</h3>
+            <p><code>BlackboardScope</code> anchors files in RAM on enable and serializes on zero reference count.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Pre-Eviction Event Flush</h3>
+            <p><code>BlackboardFile.OnUnload</code> notifies subscribed <code>BlackboardClient</code> leaf proxies before RAM eviction.</p>
+          </div>
+          <div class="feature-card">
+            <h3>Zero-Allocation Gameplay</h3>
+            <p><code>Tracked&lt;T&gt;</code> caches backing values locally and synchronizes only during save/load operations.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- PART 1: HOW TO USE GUIDE -->
+      <section id="installation">
+        <h2>1. Installation</h2>
+        <p>You can integrate <code>BlackboardSaveSystem</code> into your Unity project via Unity Package Manager (UPM) or as a Git Submodule.</p>
+
+        <h3 id="how-to-use">Option A: Unity Package Manager (UPM via Git URL)</h3>
+        <ol>
+          <li>Open your Unity Project.</li>
+          <li>Navigate to <strong>Window &rarr; Package Manager</strong>.</li>
+          <li>Click the <strong>+</strong> button in the top-left corner and select <strong>Add package from git URL...</strong>.</li>
+          <li>Enter the repository URL:</li>
+        </ol>
+        <pre><code>https://github.com/ThiagoDAraujoS/BlackboardSaveSystem.git</code></pre>
+
+        <h3>Option B: Git Submodule</h3>
+        <p>To add the repository as a Git submodule directly inside your Unity project's <code>Assets</code> directory:</p>
+        <pre><code>git submodule add https://github.com/ThiagoDAraujoS/BlackboardSaveSystem.git Assets/ImportedToolsAndLibraries/BlackboardSaveSystem</code></pre>
+      </section>
+
+      <section id="manager-setup">
+        <h2>2. Manager Setup</h2>
+        <ol>
+          <li>Create a persistent manager <code>GameObject</code> in your initial boot scene (e.g., <code>[SaveSystem]</code>).</li>
+          <li>Attach the <code>SaveSystem</code> component (which automatically requires and attaches <code>Blackboard</code>).</li>
+          <li>Set <code>coreFileNames</code> in the Inspector to contain your global persistent save files (e.g., <code>"core"</code>).</li>
+        </ol>
+        <pre><code><span class="kw">using</span> BlackboardSaveSystem;
+<span class="kw">using</span> UnityEngine;
+
+<span class="kw">public class</span> <span class="ty">GameInitializer</span> : <span class="ty">MonoBehaviour</span> {
+    <span class="kw">private void</span> <span class="fn">Start</span>() {
+        <span class="cm">// Initialize an active save session copying from a slot</span>
+        <span class="ty">SaveSystem</span>.<span class="fn">InitializeSession</span>(<span class="st">"Slot_1"</span>);
+    }
+}</code></pre>
+      </section>
+
+      <section id="scene-scopes">
+        <h2>3. Configuring Scene Save Scopes (<code>BlackboardScope</code>)</h2>
+        <p>
+          <code>BlackboardScope</code> automates file acquisition and release using Unity's component lifecycle (<code>OnEnable</code> / <code>OnDisable</code>).
+        </p>
+        <ol>
+          <li>Add a <code>BlackboardScope</code> component to a room, area root, or scene manager <code>GameObject</code>.</li>
+          <li>In the Inspector, populate the <code>fileNames</code> list with the save files required by entities under this scope (e.g., <code>"dungeon_level_01"</code>).</li>
+        </ol>
+        <p>
+          When the <code>GameObject</code> is enabled (or scene loaded), <code>BlackboardScope</code> acts as an RAII smart pointer that increments reference counts on its target <code>BlackboardFile</code> instances, loading them from disk into memory. When <code>BlackboardClient</code> components enable afterwards, they look up their <code>BlackboardFile</code> directly on the <code>Blackboard</code> and subscribe to its <code>OnUnload</code> event. When the last scope holding a reference to a file is disabled (dropping <code>RefCount</code> to <code>0</code>), the <code>BlackboardFile</code> invokes <code>OnUnload</code> so subscribed clients flush their state before the file is removed from RAM and serialized to disk.
+        </p>
+      </section>
+
+      <section id="entity-binding">
+        <h2>4. Entity State Binding (<code>BlackboardClient</code> &amp; <code>UniqueId</code>)</h2>
+        <p>To make any <code>GameObject</code> stateful and persistent across sessions:</p>
+        <ol>
+          <li>Attach a <code>UniqueId</code> component to the <code>GameObject</code>. A permanent GUID is generated automatically in the Unity Editor.</li>
+          <li>Attach a <code>BlackboardClient</code> component to the same <code>GameObject</code>.</li>
+          <li>Set the <code>fileName</code> field on <code>BlackboardClient</code> to match the file managed by the active <code>BlackboardScope</code> (e.g., <code>"dungeon_level_01"</code>).</li>
+        </ol>
+      </section>
+
+      <section id="custom-components">
+        <h2>5. Creating Custom State Components (<code>TrackedBehaviour</code> &amp; <code>Tracked&lt;T&gt;</code>)</h2>
+        <p>To track custom gameplay variables on an entity with zero dictionary lookup overhead during gameplay:</p>
+        <ol>
+          <li>Create a script inheriting from <code>TrackedBehaviour</code>.</li>
+          <li>Declare <code>Tracked&lt;T&gt;</code> fields passing a unique string key and default value in constructor initializers.</li>
+        </ol>
+        <pre><code><span class="kw">using</span> BlackboardSaveSystem;
+<span class="kw">using</span> UnityEngine;
+
+<span class="kw">public class</span> <span class="ty">PlayerStats</span> : <span class="ty">TrackedBehaviour</span> {
+    <span class="cm">// Zero-allocation gameplay state decorators</span>
+    <span class="kw">public</span> <span class="ty">Tracked</span>&lt;<span class="kw">int</span>&gt;    Health     = <span class="kw">new</span>(<span class="st">"health"</span>, <span class="nm">100</span>);
+    <span class="kw">public</span> <span class="ty">Tracked</span>&lt;<span class="kw">int</span>&gt;    MaxHealth  = <span class="kw">new</span>(<span class="st">"maxHealth"</span>, <span class="nm">100</span>);
+    <span class="kw">public</span> <span class="ty">Tracked</span>&lt;<span class="kw">string</span>&gt; PlayerName = <span class="kw">new</span>(<span class="st">"playerName"</span>, <span class="st">"Hero"</span>);
+
+    <span class="kw">public void</span> <span class="fn">TakeDamage</span>(<span class="kw">int</span> damage) {
+        <span class="cm">// Implicit cast allows direct arithmetic and assignment</span>
+        Health.Value = <span class="ty">Mathf</span>.<span class="fn">Max</span>(<span class="nm">0</span>, Health - damage);
+        <span class="ty">Debug</span>.<span class="fn">Log</span>(<span class="st">$"[PlayerStats] Health is now {Health}"</span>);
+    }
+}</code></pre>
+
+        <h3>Tracking Position and Rotation (<code>TrackedTransform</code>)</h3>
+        <p>
+          Attach <code>TrackedTransform</code> to any <code>GameObject</code> needing persistent coordinates. It automatically handles <code>NavMeshAgent</code> warping via <code>agent.Warp(position)</code> when restoring position.
+        </p>
+      </section>
+
+      <section id="saving-sessions">
+        <h2>6. Saving, Sessions &amp; Custom Metadata</h2>
+
+        <h3>Saving Active Session State</h3>
+        <p>To commit live entity states and flush active RAM partitions to disk:</p>
+        <pre><code><span class="cm">// Commit all loaded files to the _active_session working directory</span>
+<span class="kw">await</span> <span class="ty">SaveSystem</span>.<span class="fn">CommitToActiveSessionAsync</span>();</code></pre>
+
+        <h3>Custom Save Slot Metadata (<code>MetadataProvider</code> &amp; <code>SaveFileMetadata</code>)</h3>
+        <p>
+          <code>SaveFileMetadata</code> is completely game-agnostic, storing custom UI variables in a dynamic <code>Dictionary&lt;string, string&gt; Variables</code> container and using the <strong>Null Object Pattern</strong> (<code>"VOID"</code>) when a metadata file or key is unreadable:
+        </p>
+        <pre><code><span class="ty">SaveSystem</span>.MetadataProvider = () =&gt; <span class="kw">new</span> <span class="ty">Dictionary</span>&lt;<span class="kw">string</span>, <span class="kw">string</span>&gt; {
+    [<span class="st">"location"</span>]      = <span class="st">"Abandoned Outpost"</span>,
+    [<span class="st">"characterName"</span>] = <span class="st">"Protagonist"</span>
+};
+
+<span class="cm">// Reading save slots for UI lists (returns "VOID" via Null Object pattern if a key or meta.json is unreadable)</span>
+<span class="kw">foreach</span> (<span class="ty">SaveFileMetadata</span> meta <span class="kw">in</span> <span class="ty">SaveSystem</span>.<span class="fn">GetSaveFileList</span>()) {
+    <span class="kw">string</span> location  = meta.<span class="fn">Get</span>(<span class="st">"location"</span>);
+    <span class="kw">string</span> character = meta.<span class="fn">Get</span>(<span class="st">"characterName"</span>);
+}</code></pre>
+
+        <h3>Direct Component State Access</h3>
+        <p>You can also access active partitions directly from <code>BlackboardClient</code>:</p>
+        <pre><code><span class="ty">BlackboardClient</span> client = <span class="fn">GetComponent</span>&lt;<span class="ty">BlackboardClient</span>&gt;();
+
+<span class="cm">// Access partition for first component (index "0")</span>
+<span class="kw">var</span> partition = client.<span class="fn">GetPartition</span>(<span class="nm">0</span>);
+partition[<span class="st">"custom_flag"</span>] = <span class="kw">true</span>;</code></pre>
+      </section>
+
+      <!-- PART 2: SYSTEM ARCHITECTURE -->
+      <section id="architecture">
+        <h2>System Architecture &amp; 4-Level Partitioning</h2>
+        <p>The save system organizes state using a deterministic, case-insensitive 4-level dictionary hierarchy:</p>
+        <pre><code>fileName -&gt; entityId -&gt; componentId -&gt; variableName -&gt; value</code></pre>
+
+        <ul>
+          <li><strong>FileName</strong> (<code>string</code>): Identifies the save file / partition (e.g., <code>"core"</code>, <code>"room_01"</code>, <code>"player_inventory"</code>).</li>
+          <li><strong>EntityId</strong> (<code>string</code>): The persistent GUID assigned to a <code>GameObject</code> via <code>UniqueId</code>.</li>
+          <li><strong>ComponentId</strong> (<code>string</code>): The zero-based order index (<code>"0"</code>, <code>"1"</code>, <code>"2"</code>) of <code>IBoundState</code> components on the entity, preventing key collisions when multiple components on the same entity track variables with identical names.</li>
+          <li><strong>VariableName</strong> (<code>string</code>): The key associated with a specific <code>Tracked&lt;T&gt;</code> variable or state entry.</li>
+          <li><strong>Value</strong> (<code>object</code>): The stored primitive, vector array, or JSON-serializable value.</li>
+        </ul>
+
+        <h3>Serialized JSON Structure</h3>
+        <pre><code>{
+  <span class="st">"8f9a2b1c-3d4e-5f6a-7b8c-9d0e1f2a3b4c"</span>: {
+    <span class="st">"0"</span>: {
+      <span class="st">"health"</span>: <span class="nm">100</span>,
+      <span class="st">"maxHealth"</span>: <span class="nm">100</span>
+    },
+    <span class="st">"1"</span>: {
+      <span class="st">"body_position"</span>: [ <span class="nm">12.5</span>, <span class="nm">0.0</span>, <span class="nm">-4.2</span> ],
+      <span class="st">"body_rotation"</span>: [ <span class="nm">0.0</span>, <span class="nm">90.0</span>, <span class="nm">0.0</span> ]
+    }
+  }
+}</code></pre>
+      </section>
+
+      <section id="raii-lifecycle">
+        <h2>Reference-Counted File Lifecycle &amp; Event Architecture</h2>
+        <p>
+          <code>Blackboard</code> manages save files in memory using <code>BlackboardFile</code> instances with explicit reference counting (<code>RefCount</code>) and a deterministic execution hierarchy:
+        </p>
+
+        <div class="hierarchy-banner">
+          <div class="hierarchy-step">SaveSystem <span>(-1200)</span></div>
+          <div class="hierarchy-arrow">&rarr;</div>
+          <div class="hierarchy-step">Blackboard <span>(-1100)</span></div>
+          <div class="hierarchy-arrow">&rarr;</div>
+          <div class="hierarchy-step">BlackboardScope <span>(-1000)</span></div>
+          <div class="hierarchy-arrow">&rarr;</div>
+          <div class="hierarchy-step">BlackboardClient <span>(0)</span></div>
+        </div>
+
+        <ul>
+          <li><strong><code>Blackboard</code></strong> holds <code>Files</code> (<code>Dictionary&lt;string, BlackboardFile&gt;</code>), provides direct <em>O(1)</em> lookup (<code>GetOrCreateFile</code>) for clients, and exposes <code>OnDeactivate</code> (<code>event Action</code>) to force active <code>BlackboardScope</code> instances to release if <code>Blackboard</code> disables.</li>
+          <li><strong><code>BlackboardFile</code></strong> holds its <code>Data</code> (<code>FileContainer</code> dictionary), <code>RefCount</code>, <code>OnUnload</code> (<code>event Action</code>) for <code>BlackboardClient</code> instances, and all file unload and disk serialization procedures.</li>
+          <li><strong><code>BlackboardScope</code></strong> is a pure RAII smart pointer (<code>MonoBehaviour</code>) that anchors configured files in RAM while enabled and has zero awareness of clients.</li>
+          <li><strong><code>BlackboardClient</code></strong> is a pure leaf data proxy that subscribes directly to its <code>BlackboardFile.OnUnload</code> event.</li>
+        </ul>
+
+        <pre><code>                  AcquireFileSync() (RefCount == 0)
+                     ├──&gt; Read file from disk into BlackboardFile
+                     └──&gt; Set file.RefCount = 1
+  ┌───────────────┐
+  │ BlackboardFile│  AcquireFileSync() (RefCount &gt; 0)
+  │ (In RAM)      │  └──&gt; Increment file.RefCount (No disk I/O)
+  └───────┬───────┘
+          │          ReleaseFileAsync() (RefCount &gt; 1)
+          │          └──&gt; Decrement file.RefCount (Keep in RAM)
+          │
+          └─────────&gt; ReleaseFileAsync() (RefCount == 1 -&gt; 0)
+                     ├──&gt; file.NotifyUnloading() -&gt; invokes OnUnload on subscribed Clients
+                     ├──&gt; Remove BlackboardFile from Blackboard.Files
+                     └──&gt; file.SerializeAsync() writes JSON to disk</code></pre>
+      </section>
+
+      <!-- PART 3: C# API REFERENCE -->
+      <section id="api-blackboard">
+        <h2>API Reference: <code>Blackboard</code> &amp; <code>BlackboardFile</code></h2>
+
+        <h3>BlackboardFile Class</h3>
+        <p>Encapsulates a single save file's in-memory dictionary, reference count, and unload lifecycle events.</p>
+        <pre><code><span class="kw">public class</span> <span class="ty">BlackboardFile</span> {
+    <span class="kw">public readonly string</span>        Name;
+    <span class="kw">public readonly</span> <span class="ty">FileContainer</span> Data;
+    <span class="kw">public int</span>                    RefCount { <span class="kw">get</span>; <span class="kw">set</span>; }
+    <span class="kw">public event</span> <span class="ty">Action</span>           OnUnload;
+
+    <span class="kw">public</span> <span class="fn">BlackboardFile</span>(<span class="kw">string</span> name, <span class="ty">FileContainer</span> data = <span class="kw">null</span>);
+    <span class="kw">public void</span> <span class="fn">CollectData</span>();
+    <span class="kw">public void</span> <span class="fn">NotifyUnloading</span>();
+    <span class="kw">public</span> <span class="ty">EntityContainer</span> <span class="fn">GetOrCreateEntity</span>(<span class="kw">string</span> entityId);
+    <span class="kw">public</span> <span class="ty">Partition</span> <span class="fn">GetPartition</span>(<span class="kw">string</span> entityId, <span class="kw">string</span> componentId = <span class="st">"0"</span>);
+    <span class="kw">public</span> <span class="ty">Task</span> <span class="fn">SerializeAsync</span>(<span class="ty">Action</span>&lt;<span class="kw">string</span>&gt; onFailure = <span class="kw">null</span>);
+    <span class="kw">public static</span> <span class="ty">FileContainer</span> <span class="fn">ReadFromDisk</span>(<span class="kw">string</span> fileName, <span class="ty">Action</span>&lt;<span class="kw">string</span>&gt; onFailure = <span class="kw">null</span>);
+}</code></pre>
+
+        <h3>Blackboard Properties &amp; Events</h3>
+        <div class="api-block">
+          <div class="api-signature">public Dictionary&lt;string, BlackboardFile&gt; Files { get; }</div>
+          <p class="api-desc">Returns the active in-memory dictionary of loaded <code>BlackboardFile</code> instances.</p>
+        </div>
+        <div class="api-block">
+          <div class="api-signature">public event Action OnDeactivate</div>
+          <p class="api-desc">Broadcasts deactivation to all subscribed <code>BlackboardScope</code> instances when <code>Blackboard</code> is disabled.</p>
+        </div>
+
+        <h3>Blackboard Methods</h3>
+        <div class="api-block">
+          <div class="api-signature">public BlackboardFile GetOrCreateFile(string fileName)</div>
+          <p class="api-desc">Retrieves an active <code>BlackboardFile</code> or creates a new one if not yet loaded.</p>
+        </div>
+        <div class="api-block">
+          <div class="api-signature">public void CollectDataForFile(string fileName)
+public void CollectAllData()</div>
+          <p class="api-desc">Triggers <code>CollectData()</code> (<code>OnUnload</code>) on a specific <code>BlackboardFile</code> or across all loaded <code>BlackboardFile</code> instances.</p>
+        </div>
+        <div class="api-block">
+          <div class="api-signature">public int GetRefCount(string fileName)</div>
+          <p class="api-desc">Returns the current active reference count (<code>file.RefCount</code>) for the specified file.</p>
+        </div>
+        <div class="api-block">
+          <div class="api-signature">public EntityContainer GetOrCreateEntity(string fileName, string entityId)
+public Partition GetPartition(string fileName, string entityId, string componentId = "0")</div>
+          <p class="api-desc">Retrieves or creates the entity dictionary or target component partition inside the specified file.</p>
+        </div>
+        <div class="api-block">
+          <div class="api-signature">public void AcquireFileSync(string fileName, Action&lt;string&gt; onFailure = null)
+public Task AcquireFilesAsync(IEnumerable&lt;string&gt; fileNames, Action&lt;string&gt; onFailure = null)</div>
+          <p class="api-desc">Increments the file reference count and reads the file from disk if not already present in RAM.</p>
+        </div>
+        <div class="api-block">
+          <div class="api-signature">public bool ReleaseFile(string fileName)
+public Task&lt;bool&gt; ReleaseFileAsync(string fileName, Action&lt;string&gt; onFailure = null)
+public Task ReleaseFilesAsync(IEnumerable&lt;string&gt; fileNames, Action&lt;string&gt; onFailure = null)</div>
+          <p class="api-desc">Decrements reference count; when reaching <code>0</code>, invokes <code>file.NotifyUnloading()</code> so subscribed clients flush state, removes the file from RAM, and serializes to disk.</p>
+        </div>
+        <div class="api-block">
+          <div class="api-signature">public Task SerializeFile(string fileName, Action&lt;string&gt; onFailure = null)
+public Task SerializeBoard(Action&lt;string&gt; onFailure = null)
+public void Clear()</div>
+          <p class="api-desc">Serializes a single file or all active files to <code>_active_session</code>, or clears all in-memory files.</p>
+        </div>
+      </section>
+
+      <section id="api-savesystem">
+        <h2>API Reference: <code>SaveSystem</code> &amp; <code>SaveFileMetadata</code></h2>
+        <p>
+          <code>SaveSystem</code> coordinates disk directories, save slots, and active game session folders. Requires a <code>Blackboard</code> component on the same <code>GameObject</code> (<code>[DefaultExecutionOrder(-1200)]</code>).
+        </p>
+
+        <h3>Static Properties &amp; Delegate Hooks</h3>
+        <pre><code><span class="kw">public static</span> <span class="ty">SaveSystem</span> Instance                { <span class="kw">get</span>; }
+<span class="kw">public static</span> <span class="ty">Blackboard</span> Blackboard              { <span class="kw">get</span>; }
+<span class="kw">public static string</span>     CurrentSaveSlot          { <span class="kw">get</span>; }
+<span class="kw">public static string</span>     CurrentSaveSlotDirectory { <span class="kw">get</span>; }
+<span class="kw">public static string</span>     ActiveSessionDirectory   { <span class="kw">get</span>; }
+<span class="kw">public static string</span>     TempDirectory            { <span class="kw">get</span>; }
+
+<span class="kw">public static</span> <span class="ty">Func</span>&lt;<span class="ty">Dictionary</span>&lt;<span class="kw">string</span>, <span class="kw">string</span>&gt;&gt; MetadataProvider        { <span class="kw">get</span>; <span class="kw">set</span>; }
+<span class="kw">public static</span> <span class="ty">Func</span>&lt;<span class="kw">string</span>, <span class="ty">Task</span>&gt;               OnStartSessionRequested { <span class="kw">get</span>; <span class="kw">set</span>; }
+<span class="kw">public static</span> <span class="ty">Func</span>&lt;<span class="ty">Task</span>&gt;                       OnCloseSessionRequested { <span class="kw">get</span>; <span class="kw">set</span>; }</code></pre>
+
+        <h3>SaveFileMetadata (Null Object Pattern)</h3>
+        <pre><code>[<span class="ty">Serializable</span>]
+<span class="kw">public struct</span> <span class="ty">SaveFileMetadata</span> {
+    <span class="kw">public const string</span> VoidValue = <span class="st">"VOID"</span>;
+
+    <span class="kw">public string</span>                     slotName;
+    <span class="kw">public</span> <span class="ty">DateTime</span>                   lastSaveTime;
+    <span class="kw">public</span> <span class="ty">Dictionary</span>&lt;<span class="kw">string</span>, <span class="kw">string</span>&gt; Variables;
+
+    <span class="kw">public</span> <span class="fn">SaveFileMetadata</span>(<span class="kw">string</span> slotName, <span class="ty">DateTime</span> lastSaveTime, <span class="ty">Dictionary</span>&lt;<span class="kw">string</span>, <span class="kw">string</span>&gt; variables = <span class="kw">null</span>);
+    <span class="kw">public static</span> <span class="ty">SaveFileMetadata</span> <span class="fn">CreateVoid</span>(<span class="kw">string</span> slotName = VoidValue);
+    <span class="kw">public string</span> <span class="fn">Get</span>(<span class="kw">string</span> key);
+}</code></pre>
+
+        <h3>SaveSystem Methods</h3>
+        <div class="api-block">
+          <div class="api-signature">public static void SetSaveSlot(string slotName)
+public static void InitializeSession(string sourceSlotName)</div>
+          <p class="api-desc">Configures the active save slot directory and initializes <code>_active_session</code> from a source slot or template.</p>
+        </div>
+        <div class="api-block">
+          <div class="api-signature">public static Task CommitToActiveSessionAsync(Action&lt;string&gt; onFailure = null)
+public static Task CommitFileAsync(string fileName)</div>
+          <p class="api-desc">Collects live state from subscribed <code>BlackboardClient</code> instances and writes active files to <code>_active_session</code>.</p>
+        </div>
+        <div class="api-block">
+          <div class="api-signature">public static Task SaveGame(string targetSlotName = null, Action&lt;string&gt; onFailure = null)
+public static Task AutosaveAsync(Action&lt;string&gt; onFailure = null)
+public static List&lt;SaveFileMetadata&gt; GetSaveFileList()</div>
+          <p class="api-desc">Performs atomic slot saves, rolling autosaves, and queries all save slot metadata sorted newest first.</p>
+        </div>
+      </section>
+
+      <section id="api-scope">
+        <h2>API Reference: <code>BlackboardScope</code></h2>
+        <p>
+          <code>BlackboardScope</code> (<code>[DefaultExecutionOrder(-1000)]</code>) is a pure RAII <code>MonoBehaviour</code> smart pointer that anchors configured <code>BlackboardFile</code> instances in RAM while enabled and subscribes to <code>Blackboard.OnDeactivate</code>.
+        </p>
+        <div class="api-block">
+          <div class="api-signature">public List&lt;string&gt; fileNames</div>
+          <p class="api-desc">List of Blackboard file names to keep loaded in RAM while this scope is enabled.</p>
+        </div>
+        <div class="api-block">
+          <div class="api-signature">public void AcquireScope()
+public Task ReleaseScopeAsync()</div>
+          <p class="api-desc">Acquires file leases on <code>OnEnable</code> and releases them on <code>OnDisable</code> (or when <code>Blackboard.OnDeactivate</code> fires).</p>
+        </div>
+      </section>
+
+      <section id="api-client">
+        <h2>API Reference: <code>BlackboardClient</code> &amp; <code>IBoundState</code></h2>
+        <p>
+          <code>BlackboardClient</code> (<code>[DefaultExecutionOrder(0)]</code>) is a pure leaf-node data proxy between local <code>IBoundState</code> components on a <code>GameObject</code> and its target <code>BlackboardFile</code>. Requires a <code>UniqueId</code> component.
+        </p>
+        <pre><code><span class="kw">public interface</span> <span class="ty">IBoundState</span> {
+    <span class="kw">void</span> <span class="fn">OnLoadState</span>(<span class="ty">Partition</span> state);
+    <span class="kw">void</span> <span class="fn">OnSaveState</span>(<span class="ty">Partition</span> state);
+}</code></pre>
+        <div class="api-block">
+          <div class="api-signature">public string fileName
+public string EntityId { get; }</div>
+          <p class="api-desc">Target save file name and the persistent GUID retrieved from <code>UniqueId</code>.</p>
+        </div>
+        <div class="api-block">
+          <div class="api-signature">public void FlushStateToBlackboard()
+public void LoadStateFromBlackboard()
+public Partition GetPartition(int componentIndex = 0)
+public Partition GetPartition(string componentId)</div>
+          <p class="api-desc">Flushes or restores all local <code>IBoundState</code> components into component-indexed partitions (<code>"0"</code>, <code>"1"</code>, ...). Automatically subscribes <code>FlushStateToBlackboard</code> to <code>BlackboardFile.OnUnload</code> while enabled.</p>
+        </div>
+      </section>
+
+      <section id="api-tracked">
+        <h2>API Reference: <code>TrackedBehaviour</code> &amp; <code>Tracked&lt;T&gt;</code></h2>
+        <pre><code><span class="kw">public interface</span> <span class="ty">ITracked</span> {
+    <span class="kw">string</span> Key { <span class="kw">get</span>; }
+    <span class="kw">void</span> <span class="fn">Save</span>(<span class="ty">Dictionary</span>&lt;<span class="kw">string</span>, <span class="kw">object</span>&gt; state);
+    <span class="kw">void</span> <span class="fn">Load</span>(<span class="ty">Dictionary</span>&lt;<span class="kw">string</span>, <span class="kw">object</span>&gt; state);
+}
+
+<span class="kw">public class</span> <span class="ty">Tracked</span>&lt;<span class="ty">T</span>&gt; : <span class="ty">ITracked</span> {
+    <span class="kw">public</span> <span class="ty">T</span> Value { <span class="kw">get</span>; <span class="kw">set</span>; }
+    <span class="kw">public</span> <span class="fn">Tracked</span>(<span class="kw">string</span> key, <span class="ty">T</span> defaultValue);
+    <span class="kw">public static implicit operator</span> <span class="ty">T</span>(<span class="ty">Tracked</span>&lt;<span class="ty">T</span>&gt; tracked);
+}
+
+<span class="kw">public abstract class</span> <span class="ty">TrackedBehaviour</span> : <span class="ty">MonoBehaviour</span>, <span class="ty">IBoundState</span> {
+    <span class="kw">public virtual void</span> <span class="fn">OnSaveState</span>(<span class="ty">Dictionary</span>&lt;<span class="kw">string</span>, <span class="kw">object</span>&gt; state);
+    <span class="kw">public virtual void</span> <span class="fn">OnLoadState</span>(<span class="ty">Dictionary</span>&lt;<span class="kw">string</span>, <span class="kw">object</span>&gt; state);
+    <span class="kw">protected virtual void</span> <span class="fn">OnAwake</span>();
+}</code></pre>
+      </section>
+
+      <section id="api-transform">
+        <h2>API Reference: <code>TrackedTransform</code> &amp; <code>UniqueId</code></h2>
+        <h3 id="api-uniqueid">TrackedTransform</h3>
+        <p>Inherits from <code>TrackedBehaviour</code> and automatically tracks <code>body_position</code> and <code>body_rotation</code>, with built-in <code>NavMeshAgent.Warp</code> support.</p>
+        <pre><code><span class="kw">public class</span> <span class="ty">TrackedTransform</span> : <span class="ty">TrackedBehaviour</span> {
+    [<span class="ty">SerializeField</span>] <span class="kw">protected</span> <span class="ty">Transform</span> targetBody;
+    [<span class="ty">SerializeField</span>] <span class="kw">protected bool</span>      saveRotation = <span class="kw">true</span>;
+}</code></pre>
+
+        <h3>UniqueId</h3>
+        <p>Generates and persists a globally unique string GUID for a <code>GameObject</code> in the Unity Editor.</p>
+        <pre><code><span class="kw">public class</span> <span class="ty">UniqueId</span> : <span class="ty">MonoBehaviour</span> {
+    <span class="kw">public string</span> Id { <span class="kw">get</span>; }
+}</code></pre>
+      </section>
+
+      <section id="execution-order">
+        <h2>Assembly Definitions &amp; Execution Order</h2>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Component / Assembly</th>
+                <th>Order / Scope</th>
+                <th>Responsibility</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>SaveSystem</code></td>
+                <td><code>-1200</code></td>
+                <td>Initializes singleton, session folders, and path mappings.</td>
+              </tr>
+              <tr>
+                <td><code>Blackboard</code></td>
+                <td><code>-1100</code></td>
+                <td>Manages active <code>BlackboardFile</code> dictionary and broadcasts <code>OnDeactivate</code>.</td>
+              </tr>
+              <tr>
+                <td><code>BlackboardScope</code></td>
+                <td><code>-1000</code></td>
+                <td>RAII smart pointer that acquires and releases reference-counted file leases.</td>
+              </tr>
+              <tr>
+                <td><code>BlackboardClient</code></td>
+                <td><code>0</code></td>
+                <td>Leaf proxy binding entity <code>IBoundState</code> components to <code>BlackboardFile.OnUnload</code>.</td>
+              </tr>
+              <tr>
+                <td><code>BlackboardSaveSystem.Runtime.asmdef</code></td>
+                <td>Runtime</td>
+                <td>Core runtime assembly with zero host-game dependencies.</td>
+              </tr>
+              <tr>
+                <td><code>BlackboardSaveSystem.Editor.asmdef</code></td>
+                <td>Editor</td>
+                <td>Custom inspectors and <code>BlackboardExecutionOrderEnforcer</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer>
+        <span>BlackboardSaveSystem Documentation</span>
+        <span>Built for Unity &bull; Hosted on GitHub Pages</span>
+      </footer>
+
+    </main>
+  </div>
+
+</body>
+</html>
