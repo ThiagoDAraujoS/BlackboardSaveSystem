@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Newtonsoft.Json;
 using UnityEngine;
 using UnityEngine.Scripting.APIUpdating;
+// ReSharper disable InconsistentNaming
 
 // ReSharper disable once CheckNamespace
 namespace BlackboardSaveSystem {
@@ -162,13 +163,11 @@ namespace BlackboardSaveSystem {
 
                 await CommitToActiveSessionAsync(onFailure);
 
-                SaveMetadataContext context = MetadataProvider != null
-                    ? MetadataProvider.Invoke()
-                    : new SaveMetadataContext{
-                        Location      = "Unknown Location",
-                        CharacterName = null,
-                        Region        = "Station Outpost"
-                    };
+                SaveMetadataContext context = MetadataProvider?.Invoke() ?? new SaveMetadataContext{
+                    Location      = "Unknown Location",
+                    CharacterName = null,
+                    Region        = "Station Outpost"
+                };
 
                 SaveFileMetadata meta = new(
                     CurrentSaveSlot,
@@ -198,7 +197,7 @@ namespace BlackboardSaveSystem {
             }
         }
 
-        /// Helper method to recursively copy all files from source directory to destination directory.
+        /// Helper method to recursively copy all files from the source directory to the destination directory.
         private static void CopyDirectory(string sourceDir, string destinationDir){
             Directory.CreateDirectory(destinationDir);
 
@@ -233,7 +232,7 @@ namespace BlackboardSaveSystem {
                 await OnStartSessionRequested.Invoke(saves[0].slotName);
         }
 
-        /// Deletes a save slot directory and its contents from disk.
+        /// Deletes a save slot directory and its contents from the disk.
         public static bool DeleteSave(string slotName){
             if (string.IsNullOrEmpty(slotName)) return false;
             if (string.Equals(slotName, TempDirectoryName, StringComparison.OrdinalIgnoreCase)) return false;
@@ -246,7 +245,7 @@ namespace BlackboardSaveSystem {
             return true;
         }
 
-        /// Gathers all save folders from disk and reconstructs their metadata by reading
+        /// Gathers all save folders from the disk and reconstructs their metadata by reading
         /// their coined meta.json files, sorting them the newest first.
         public static List<SaveFileMetadata> GetSaveFileList(){
             List<SaveFileMetadata> saveList = new();
