@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Scripting.APIUpdating;
 using Partition = System.Collections.Generic.Dictionary<string, object>;
@@ -6,66 +5,61 @@ using Partition = System.Collections.Generic.Dictionary<string, object>;
 // ReSharper disable once CheckNamespace
 namespace BlackboardSaveSystem {
     /// Contract for game components requiring state persistence.
-    /// Passes raw dictionary partitions that utilize Blackboard variables.
     [MovedFrom(true, "Core.State")]
     public interface IBoundState {
         void OnLoadState(Partition state);
         void OnSaveState(Partition state);
     }
-    
-    /// A lifecycle mediator that automatically binds local game components to the unified Blackboard database.
-    /// It grabs the entity's UniqueId, locates all local scripts implementing IBoundState,
-    /// and coordinates their loading and saving hooks into the unified board.
-    /// It also acts as an on-demand proxy, allowing components and other systems to directly
-    /// query active data partitions for this entity.
+
+    /// Leaf lifecycle mediator that binds local IBoundState components to a BlackboardFile.
     [MovedFrom(true, "Core.State")]
     [RequireComponent(typeof(UniqueId))]
     [DefaultExecutionOrder(0)]
     public class BlackboardClient : MonoBehaviour {
-        public static readonly HashSet<BlackboardClient> ActiveClients = new();
+        private IBoundState[]  _boundStates;
+        private BlackboardFile _file;
 
-        private IBoundState[] _boundStates;
-        
-        public string fileName = string.Empty;  
+        public string fileName = string.Empty;
 
         public string EntityId { get; private set; }
 
+        /// Caches the entity UniqueId and all local IBoundState components.
         private void Awake() {
             EntityId     = GetComponent<UniqueId>().Id;
             _boundStates = GetComponents<IBoundState>();
         }
 
+        /// Binds to the target BlackboardFile's unloaded event and loads the initial component state.
         private void OnEnable() {
-            ActiveClients.Add(this);
+            _file          =  SaveSystem.Blackboard.GetOrCreateFile(fileName);
+            _file.OnUnload += FlushStateToBlackboard;
             LoadStateFromBlackboard();
         }
 
+        /// Flushes state if the file is still loaded in the Blackboard and unsubscribes from unloading.
         private void OnDisable() {
-            ActiveClients.Remove(this);
-            FlushStateToBlackboard();
+            _file.OnUnload -= FlushStateToBlackboard;
+            if (SaveSystem.Blackboard.Contains(fileName))
+                FlushStateToBlackboard();
+            _file = null;
         }
-        
-        /// Flushes all local IBoundState components directly into this entity's component-indexed blackboard partitions.
-        public void FlushStateToBlackboard() {
-            for (int i = 0; i < _boundStates.Length; i++) {
-                Partition state = GetPartition(i);
-                _boundStates[i]?.OnSaveState(state);
-            }
-        }
-        
-        /// Restores all local IBoundState components directly from this entity's component-indexed blackboard partitions.
-        public void LoadStateFromBlackboard() {
-            for (int i = 0; i < _boundStates.Length; i++) {
-                Partition state = GetPartition(i);
-                _boundStates[i]?.OnLoadState(state);
-            }
-        }
-        
-        /// Shortcut accessor to get a component's specific partition for this entity on the unified board.
-        /// Automatically generates a clean, empty partition if it does not exist yet.
-        public Partition GetPartition(int componentIndex = 0) => SaveSystem.Blackboard.GetPartition(fileName, EntityId, componentIndex.ToString());
 
-        /// Shortcut accessor to get a component's specific partition by string componentId for this entity on the unified board.
-        public Partition GetPartition(string componentId) => SaveSystem.Blackboard.GetPartition(fileName, EntityId, componentId);
+        /// Flushes all local IBoundState components into this entity's component-indexed partitions.
+        public void FlushStateToBlackboard() {
+            for (int i = 0; i < _boundStates.Length; i++)
+                _boundStates[i].OnSaveState(GetPartition(i));
+        }
+
+        /// Restores all local IBoundState components from this entity's component-indexed partitions.
+        public void LoadStateFromBlackboard() {
+            for (int i = 0; i < _boundStates.Length; i++)
+                _boundStates[i].OnLoadState(GetPartition(i));
+        }
+
+        /// Returns the partition for this entity by numeric component index.
+        public Partition GetPartition(int componentIndex = 0) => GetPartition(componentIndex.ToString());
+
+        /// Returns the partition for this entity by string component identifier.
+        public Partition GetPartition(string componentId) => (_file ?? SaveSystem.Blackboard.GetOrCreateFile(fileName)).GetPartition(EntityId, componentId);
     }
 }

@@ -7,11 +7,12 @@ using UnityEngine;
 
 // ReSharper disable once CheckNamespace
 namespace BlackboardSaveSystem {
-    /// Automatically verifies and enforces Unity Script Execution Order for SaveSystem, BlackboardScope, and BlackboardClient on Editor load.
+    /// Automatically verifies and enforces Unity Script Execution Order for SaveSystem, Blackboard, BlackboardScope, and BlackboardClient on Editor load.
     [InitializeOnLoad]
     public static class BlackboardExecutionOrderEnforcer{
         static BlackboardExecutionOrderEnforcer(){
-            EnforceOrder<SaveSystem>(-1100);
+            EnforceOrder<SaveSystem>(-1200);
+            EnforceOrder<Blackboard>(-1100);
             EnforceOrder<BlackboardScope>(-1000);
             EnforceOrder<BlackboardClient>(0);
         }

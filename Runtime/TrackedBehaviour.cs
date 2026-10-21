@@ -12,7 +12,7 @@ namespace BlackboardSaveSystem {
     [RequireComponent(typeof(BlackboardClient))]
     public abstract class TrackedBehaviour : MonoBehaviour, IBoundState{
         /// Caches all tracked properties initialized in subclasses.
-        /// Initialized inline so no Awake() lifecycle coupling is needed.
+        /// Initialized inline, so no Awake() lifecycle coupling is needed.
         private readonly List<ITracked> _trackedProperties = new();
 
         /// Serializes all registered Tracked variables into the active blackboard partition.

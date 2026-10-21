@@ -11,7 +11,7 @@ using UnityEngine.Scripting.APIUpdating;
 namespace BlackboardSaveSystem {
     [MovedFrom(true, "Core.Managers")]
     [RequireComponent(typeof(Blackboard))]
-    [DefaultExecutionOrder(-1100)]
+    [DefaultExecutionOrder(-1200)]
     public class SaveSystem : MonoBehaviour{
         private Blackboard _blackboard;
 
@@ -20,9 +20,9 @@ namespace BlackboardSaveSystem {
         public static Blackboard Blackboard => Instance._blackboard;
         public        string[]   coreFileNames = { "core" };
 
-        public static Func<SaveMetadataContext> MetadataProvider        { get; set; }
-        public static Func<string, Task>        OnStartSessionRequested { get; set; }
-        public static Func<Task>                OnCloseSessionRequested { get; set; }
+        public static Func<Dictionary<string, string>> MetadataProvider        { get; set; }
+        public static Func<string, Task>               OnStartSessionRequested { get; set; }
+        public static Func<Task>                       OnCloseSessionRequested { get; set; }
 
         [SerializeField] private string currentSaveSlot;
         public static            string CurrentSaveSlot          => Instance.currentSaveSlot;
@@ -92,18 +92,13 @@ namespace BlackboardSaveSystem {
 
         /// Flushes active entities and commits all currently loaded Blackboard partitions to the active session folder on disk.
         public static async Task CommitToActiveSessionAsync(Action<string> onFailure = null){
-            foreach (BlackboardClient client in BlackboardClient.ActiveClients)
-                client.FlushStateToBlackboard();
-
+            Blackboard.CollectAllData();
             await Blackboard.SerializeBoard(onFailure);
         }
 
         /// Flushes active entities and serializes a specific partition to disk.
         public static async Task CommitFileAsync(string fileName){
-            foreach (BlackboardClient client in BlackboardClient.ActiveClients)
-                if (string.Equals(client.fileName, fileName, StringComparison.OrdinalIgnoreCase))
-                    client.FlushStateToBlackboard();
-
+            Blackboard.CollectDataForFile(fileName);
             await Blackboard.SerializeFile(fileName);
         }
 
@@ -119,7 +114,6 @@ namespace BlackboardSaveSystem {
 
         /// Synchronously acquires multiple file references and loads any missing files from the active session directory.
         public static void AcquireFilesSync(IEnumerable<string> fileNames, Action<string> onFailure = null){
-            if (fileNames == null) return;
             foreach (string fileName in fileNames)
                 Blackboard.AcquireFileSync(fileName, onFailure);
         }
@@ -127,25 +121,13 @@ namespace BlackboardSaveSystem {
         /// Decrements the reference count for a file and removes it from active memory only if the reference count reaches 0.
         public static bool ReleaseFile(string fileName) => Blackboard.ReleaseFile(fileName);
 
-        /// Decrements the reference count for a file. If the reference count reaches 0, flushes active clients for that file, serializes it to the active session folder, and removes it from memory.
-        public static async Task<bool> ReleaseFileAsync(string fileName, Action<string> onFailure = null){
-            if (string.IsNullOrEmpty(fileName)) return false;
-
-            if (Blackboard.GetRefCount(fileName) <= 1){
-                foreach (BlackboardClient client in BlackboardClient.ActiveClients)
-                    if (string.Equals(client.fileName, fileName, StringComparison.OrdinalIgnoreCase))
-                        client.FlushStateToBlackboard();
-            }
-
-            return await Blackboard.ReleaseFileAsync(fileName, onFailure);
-        }
+        /// Decrements the reference count for a file, flushing clients, serializing, and removing it from memory if reaching 0.
+        public static Task<bool> ReleaseFileAsync(string fileName, Action<string> onFailure = null) =>
+            Blackboard.ReleaseFileAsync(fileName, onFailure);
 
         /// Decrements reference counts for multiple files, flushing, serializing, and removing only those whose reference count reaches 0.
-        public static async Task ReleaseFilesAsync(IEnumerable<string> fileNames, Action<string> onFailure = null){
-            if (fileNames == null) return;
-            foreach (string fileName in fileNames)
-                await ReleaseFileAsync(fileName, onFailure);
-        }
+        public static Task ReleaseFilesAsync(IEnumerable<string> fileNames, Action<string> onFailure = null) =>
+            Blackboard.ReleaseFilesAsync(fileNames, onFailure);
 
         /// Alias for ReleaseFileAsync to unload a ref-counted file partition.
         public static Task<bool> UnloadFileAsync(string fileName, Action<string> onFailure = null) =>
@@ -163,19 +145,8 @@ namespace BlackboardSaveSystem {
 
                 await CommitToActiveSessionAsync(onFailure);
 
-                SaveMetadataContext context = MetadataProvider?.Invoke() ?? new SaveMetadataContext{
-                    Location      = "Unknown Location",
-                    CharacterName = null,
-                    Region        = "Station Outpost"
-                };
-
-                SaveFileMetadata meta = new(
-                    CurrentSaveSlot,
-                    DateTime.Now,
-                    string.IsNullOrEmpty(context.Location) ? "Unknown Location" : context.Location,
-                    context.CharacterName,
-                    string.IsNullOrEmpty(context.Region) ? "Station Outpost" : context.Region
-                );
+                Dictionary<string, string> variables = MetadataProvider?.Invoke() ?? new Dictionary<string, string>();
+                SaveFileMetadata           meta      = new(CurrentSaveSlot, DateTime.Now, variables);
 
                 string metaJson     = JsonConvert.SerializeObject(meta, Formatting.Indented);
                 string metaFilePath = Path.Combine(ActiveSessionDirectory, "meta.json");
@@ -245,33 +216,32 @@ namespace BlackboardSaveSystem {
             return true;
         }
 
-        /// Gathers all save folders from the disk and reconstructs their metadata by reading
-        /// their coined meta.json files, sorting them the newest first.
+        /// Gathers all save folders from disk and reconstructs their metadata, sorting newest first.
         public static List<SaveFileMetadata> GetSaveFileList(){
             List<SaveFileMetadata> saveList = new();
 
-            string[] directories = Directory.GetDirectories(_baseSavePath);
-            foreach (string dirPath in directories){
+            foreach (string dirPath in Directory.GetDirectories(_baseSavePath)){
                 string dirName = Path.GetFileName(dirPath);
 
                 if (string.Equals(dirName, TempDirectoryName,            StringComparison.OrdinalIgnoreCase)) continue;
                 if (string.Equals(dirName, Instance.defaultSaveTemplate, StringComparison.OrdinalIgnoreCase)) continue;
 
-                string metaFilePath = Path.Combine(dirPath, "meta.json");
-                try{
-                    string           json = File.ReadAllText(metaFilePath);
-                    SaveFileMetadata meta = JsonConvert.DeserializeObject<SaveFileMetadata>(json);
-                    saveList.Add(meta);
-                }
-                catch (Exception e){
-                    Debug.LogWarning($"[SaveSystem] Failed to parse metadata for {dirName}: {e.Message}");
-                    DateTime lastWriteTime = Directory.GetLastWriteTimeUtc(dirPath);
-                    saveList.Add(new SaveFileMetadata(dirName, lastWriteTime.ToLocalTime(), "Unknown Location"));
-                }
+                saveList.Add(ReadMetadata(dirPath, dirName));
             }
 
             saveList.Sort((a, b) => b.lastSaveTime.CompareTo(a.lastSaveTime));
             return saveList;
+        }
+
+        /// Reads meta.json for a slot directory or returns a void SaveFileMetadata object if unreadable.
+        private static SaveFileMetadata ReadMetadata(string dirPath, string dirName){
+            string metaFilePath = Path.Combine(dirPath, "meta.json");
+            if (!File.Exists(metaFilePath)) return SaveFileMetadata.CreateVoid(dirName);
+
+            SaveFileMetadata meta = JsonConvert.DeserializeObject<SaveFileMetadata>(File.ReadAllText(metaFilePath));
+            meta.slotName  = string.IsNullOrEmpty(meta.slotName) ? dirName : meta.slotName;
+            meta.Variables ??= new Dictionary<string, string>();
+            return meta;
         }
 
         /// Automatically performs an atomic save to one of three rolling autosave directories,
@@ -328,26 +298,28 @@ namespace BlackboardSaveSystem {
 #endif
     }
 
-    public struct SaveMetadataContext{
-        public string Location;
-        public string CharacterName;
-        public string Region;
-    }
-
+    /// Serializable metadata container for a save slot directory using the Null Object pattern for missing values.
     [Serializable]
     public struct SaveFileMetadata{
-        public string   slotName;
-        public DateTime lastSaveTime;
-        public string   location;
-        public string   characterName;
-        public string   region;
+        public const string VoidValue = "VOID";
 
-        public SaveFileMetadata(string slotName, DateTime lastSaveTime, string location, string characterName = null, string region = null){
-            this.slotName      = slotName;
-            this.lastSaveTime  = lastSaveTime;
-            this.location      = location;
-            this.characterName = characterName;
-            this.region        = region;
+        public string                     slotName;
+        public DateTime                   lastSaveTime;
+        public Dictionary<string, string> Variables;
+
+        /// Initializes save slot metadata with a slot name, timestamp, and key-value variables.
+        public SaveFileMetadata(string slotName, DateTime lastSaveTime, Dictionary<string, string> variables = null){
+            this.slotName     = string.IsNullOrEmpty(slotName) ? VoidValue : slotName;
+            this.lastSaveTime = lastSaveTime;
+            Variables         = variables ?? new Dictionary<string, string>();
         }
+
+        /// Returns a Null Object metadata instance for unreadable or missing save metadata.
+        public static SaveFileMetadata CreateVoid(string slotName = VoidValue) =>
+            new(slotName, DateTime.MinValue, new Dictionary<string, string>());
+
+        /// Retrieves a metadata variable by key, returning "VOID" if the key could not be read.
+        public string Get(string key) =>
+            Variables != null && Variables.TryGetValue(key, out string value) && !string.IsNullOrEmpty(value) ? value : VoidValue;
     }
 }
