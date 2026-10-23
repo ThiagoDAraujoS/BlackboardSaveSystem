@@ -66,7 +66,7 @@ namespace BlackboardSaveSystem {
             SerializedProperty targetSlotProp = serializedObject.FindProperty("targetSaveSlotName");
 
             EditorGUILayout.Space(12);
-            EditorGUILayout.LabelField("Save Template & Slot Tools", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Save Slot Tools", EditorStyles.boldLabel);
 
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox)){
                 // Slot Dropdown
