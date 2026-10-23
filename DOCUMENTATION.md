@@ -188,8 +188,6 @@ Clears all in-memory files and resets reference counters.
 ### Delegate Hooks
 
 - `public static Func<Dictionary<string, string>> MetadataProvider`: Delegate provided by host games to return custom key-value save metadata (e.g., `"location"`, `"characterName"`, `"chapter"`).
-- `public static Func<string, Task> OnStartSessionRequested`: Delegate invoked when starting a session.
-- `public static Func<Task> OnCloseSessionRequested`: Delegate invoked when closing a session.
 
 ### SaveFileMetadata (Null Object Pattern)
 

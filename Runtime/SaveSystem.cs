@@ -20,16 +20,14 @@ namespace BlackboardSaveSystem {
         public static Blackboard Blackboard => Instance._blackboard;
         public        string[]   coreFileNames = { "core" };
 
-        public static Func<Dictionary<string, string>> MetadataProvider        { get; set; }
-        public static Func<string, Task>               OnStartSessionRequested { get; set; }
-        public static Func<Task>                       OnCloseSessionRequested { get; set; }
+        public static Func<Dictionary<string, string>> MetadataProvider { get; set; }
 
         [SerializeField] private string currentSaveSlot;
         public static            string CurrentSaveSlot          => Instance.currentSaveSlot;
         public static            string CurrentSaveSlotDirectory => Path.Combine(_baseSavePath, CurrentSaveSlot);
 
         [Header("Editor & Save Slot Tools")]
-        [SerializeField] private string targetSaveSlotName = "SaveSlot_01";
+        [SerializeField] private string targetSaveSlotName = "NewGame";
         public string TargetSaveSlotName{
             get => targetSaveSlotName;
             set => targetSaveSlotName = value;
@@ -73,10 +71,12 @@ namespace BlackboardSaveSystem {
                 Directory.CreateDirectory(directory);
         }
 
-        /// Copies files from the selected source save slot directly into the active session working folder.
-        /// If no source slot name is provided, initializes an empty active session.
+        /// Copies files from the selected source save slot into the active session working folder.
+        /// If no source slot name is provided, initializes a fresh session in an empty folder with a generic slot name.
         public static void InitializeSession(string sourceSlotName = null){
-            Instance.currentSaveSlot = sourceSlotName;
+            Instance.currentSaveSlot = string.IsNullOrEmpty(sourceSlotName)
+                ? $"NewGame_{DateTime.Now:yyyyMMdd_HHmmss}"
+                : sourceSlotName;
 
             if (Directory.Exists(ActiveSessionDirectory))
                 Directory.Delete(ActiveSessionDirectory, true);
@@ -189,19 +189,6 @@ namespace BlackboardSaveSystem {
             await Instance._blackboard.DeserializeFiles(fileNames, onFailure);
         }
 
-        /// Starts a new game session starting fresh from 0 (passing null to OnStartSessionRequested).
-        public static async Task StartNewGameAsync(){
-            if (OnStartSessionRequested != null)
-                await OnStartSessionRequested.Invoke(null);
-        }
-
-        /// Loads the most recent save file and launches the game session.
-        public static async Task ContinueGameAsync(){
-            List<SaveFileMetadata> saves = GetSaveFileList();
-            if (saves.Count == 0) return;
-            if (OnStartSessionRequested != null)
-                await OnStartSessionRequested.Invoke(saves[0].slotName);
-        }
 
         /// Deletes a save slot directory and its contents from the disk.
         public static bool DeleteSave(string slotName){
@@ -269,25 +256,12 @@ namespace BlackboardSaveSystem {
         }
 
 #if UNITY_EDITOR
-        [ContextMenu("New Game")]
-        public void StartNewGame() => _ = StartNewGameAsync();
-
-        [ContextMenu("Load")]
-        public void LoadNewGame() => _ = OnStartSessionRequested?.Invoke("TestSave");
-
-        [ContextMenu("Close")]
-        public void CloseSession() => _ = OnCloseSessionRequested?.Invoke();
-
         [ContextMenu("Save")]
         public void Save() => _ = SaveGame("TestSave");
 
         [ContextMenu("Save Target Slot")]
         public void SaveTargetSlot(){
-            if (string.IsNullOrWhiteSpace(targetSaveSlotName)){
-                Debug.LogWarning("[SaveSystem] Cannot save: TargetSaveSlotName is empty.");
-                return;
-            }
-            Debug.Log($"[SaveSystem] Saving current session to target slot: '{targetSaveSlotName}'");
+            if (string.IsNullOrWhiteSpace(targetSaveSlotName)) return;
             _ = SaveGame(targetSaveSlotName);
         }
 
