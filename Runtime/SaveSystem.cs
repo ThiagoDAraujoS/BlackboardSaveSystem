@@ -28,11 +28,8 @@ namespace BlackboardSaveSystem {
         public static            string CurrentSaveSlot          => Instance.currentSaveSlot;
         public static            string CurrentSaveSlotDirectory => Path.Combine(_baseSavePath, CurrentSaveSlot);
 
-        [SerializeField] private string defaultSaveTemplate = "template";
-        public static            string DefaultSaveTemplate => Instance.defaultSaveTemplate;
-
-        [Header("Editor & Template Generation")]
-        [SerializeField] private string targetSaveSlotName = "Template_GameStart";
+        [Header("Editor & Save Slot Tools")]
+        [SerializeField] private string targetSaveSlotName = "SaveSlot_01";
         public string TargetSaveSlotName{
             get => targetSaveSlotName;
             set => targetSaveSlotName = value;
@@ -77,7 +74,8 @@ namespace BlackboardSaveSystem {
         }
 
         /// Copies files from the selected source save slot directly into the active session working folder.
-        public static void InitializeSession(string sourceSlotName){
+        /// If no source slot name is provided, initializes an empty active session.
+        public static void InitializeSession(string sourceSlotName = null){
             Instance.currentSaveSlot = sourceSlotName;
 
             if (Directory.Exists(ActiveSessionDirectory))
@@ -85,9 +83,11 @@ namespace BlackboardSaveSystem {
 
             Directory.CreateDirectory(ActiveSessionDirectory);
 
-            string sourceDir = Path.Combine(_baseSavePath, sourceSlotName);
-            if (Directory.Exists(sourceDir))
-                CopyDirectory(sourceDir, ActiveSessionDirectory);
+            if (!string.IsNullOrEmpty(sourceSlotName)){
+                string sourceDir = Path.Combine(_baseSavePath, sourceSlotName);
+                if (Directory.Exists(sourceDir))
+                    CopyDirectory(sourceDir, ActiveSessionDirectory);
+            }
         }
 
         /// Flushes active entities and commits all currently loaded Blackboard partitions to the active session folder on disk.
@@ -189,10 +189,10 @@ namespace BlackboardSaveSystem {
             await Instance._blackboard.DeserializeFiles(fileNames, onFailure);
         }
 
-        /// Starts a new game session using the default template.
+        /// Starts a new game session starting fresh from 0 (passing null to OnStartSessionRequested).
         public static async Task StartNewGameAsync(){
             if (OnStartSessionRequested != null)
-                await OnStartSessionRequested.Invoke(DefaultSaveTemplate);
+                await OnStartSessionRequested.Invoke(null);
         }
 
         /// Loads the most recent save file and launches the game session.
@@ -207,7 +207,6 @@ namespace BlackboardSaveSystem {
         public static bool DeleteSave(string slotName){
             if (string.IsNullOrEmpty(slotName)) return false;
             if (string.Equals(slotName, TempDirectoryName, StringComparison.OrdinalIgnoreCase)) return false;
-            if (Instance != null && string.Equals(slotName, Instance.defaultSaveTemplate, StringComparison.OrdinalIgnoreCase)) return false;
 
             _baseSavePath ??= Path.Combine(Application.persistentDataPath, "Saves");
             string targetDir = Path.Combine(_baseSavePath, slotName);
@@ -223,8 +222,7 @@ namespace BlackboardSaveSystem {
             foreach (string dirPath in Directory.GetDirectories(_baseSavePath)){
                 string dirName = Path.GetFileName(dirPath);
 
-                if (string.Equals(dirName, TempDirectoryName,            StringComparison.OrdinalIgnoreCase)) continue;
-                if (string.Equals(dirName, Instance.defaultSaveTemplate, StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.Equals(dirName, TempDirectoryName, StringComparison.OrdinalIgnoreCase)) continue;
 
                 saveList.Add(ReadMetadata(dirPath, dirName));
             }
@@ -272,7 +270,7 @@ namespace BlackboardSaveSystem {
 
 #if UNITY_EDITOR
         [ContextMenu("New Game")]
-        public void StartNewGame() => _ = OnStartSessionRequested?.Invoke(DefaultSaveTemplate);
+        public void StartNewGame() => _ = StartNewGameAsync();
 
         [ContextMenu("Load")]
         public void LoadNewGame() => _ = OnStartSessionRequested?.Invoke("TestSave");
