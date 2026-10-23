@@ -90,9 +90,8 @@ namespace BlackboardSaveSystem {
                         targetSlotProp.stringValue = _availableSlots[newIndex];
                         serializedObject.ApplyModifiedProperties();
                     }
-                    else{
+                    else
                         saveSystem.TargetSaveSlotName = _availableSlots[newIndex];
-                    }
                 }
 
                 EditorGUILayout.Space(4);
@@ -105,7 +104,7 @@ namespace BlackboardSaveSystem {
                     : "Save to Slot (Play Mode Only)";
 
                 if (GUILayout.Button(buttonLabel, GUILayout.Height(30))){
-                    saveSystem.SaveTargetSlot();
+                    Debug.Log("THIS FEATURE IS NOT IMPLEMENTED!!");
                 }
                 GUI.backgroundColor = Color.white;
                 EditorGUI.EndDisabledGroup();

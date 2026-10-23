@@ -21,18 +21,12 @@ namespace BlackboardSaveSystem {
         public        string[]   coreFileNames = { "core" };
 
         public static Func<Dictionary<string, string>> MetadataProvider        { get; set; }
-        public static Func<string, Task>               OnStartSessionRequested { get; set; }
-        public static Func<Task>                       OnCloseSessionRequested { get; set; }
 
         [SerializeField] private string currentSaveSlot;
         public static            string CurrentSaveSlot          => Instance.currentSaveSlot;
         public static            string CurrentSaveSlotDirectory => Path.Combine(_baseSavePath, CurrentSaveSlot);
-
-        [SerializeField] private string defaultSaveTemplate = "template";
-        public static            string DefaultSaveTemplate => Instance.defaultSaveTemplate;
-
-        [Header("Editor & Template Generation")]
-        [SerializeField] private string targetSaveSlotName = "Template_GameStart";
+        
+        [SerializeField] private string targetSaveSlotName;
         public string TargetSaveSlotName{
             get => targetSaveSlotName;
             set => targetSaveSlotName = value;
@@ -77,17 +71,19 @@ namespace BlackboardSaveSystem {
         }
 
         /// Copies files from the selected source save slot directly into the active session working folder.
-        public static void InitializeSession(string sourceSlotName){
-            Instance.currentSaveSlot = sourceSlotName;
-
+        public static void InitializeSession(string sourceSlotName = null){
             if (Directory.Exists(ActiveSessionDirectory))
                 Directory.Delete(ActiveSessionDirectory, true);
-
             Directory.CreateDirectory(ActiveSessionDirectory);
-
-            string sourceDir = Path.Combine(_baseSavePath, sourceSlotName);
-            if (Directory.Exists(sourceDir))
-                CopyDirectory(sourceDir, ActiveSessionDirectory);
+            
+            if (string.IsNullOrEmpty(sourceSlotName))
+                Instance.currentSaveSlot = $"NewGame_{DateTime.Now:yyyyMMdd_HHmmss}";
+            else{
+                Instance.currentSaveSlot = sourceSlotName;
+                string sourceDir = Path.Combine(_baseSavePath, sourceSlotName);
+                if (Directory.Exists(sourceDir))
+                    CopyDirectory(sourceDir, ActiveSessionDirectory);
+            }
         }
 
         /// Flushes active entities and commits all currently loaded Blackboard partitions to the active session folder on disk.
@@ -189,25 +185,11 @@ namespace BlackboardSaveSystem {
             await Instance._blackboard.DeserializeFiles(fileNames, onFailure);
         }
 
-        /// Starts a new game session using the default template.
-        public static async Task StartNewGameAsync(){
-            if (OnStartSessionRequested != null)
-                await OnStartSessionRequested.Invoke(DefaultSaveTemplate);
-        }
-
-        /// Loads the most recent save file and launches the game session.
-        public static async Task ContinueGameAsync(){
-            List<SaveFileMetadata> saves = GetSaveFileList();
-            if (saves.Count == 0) return;
-            if (OnStartSessionRequested != null)
-                await OnStartSessionRequested.Invoke(saves[0].slotName);
-        }
-
         /// Deletes a save slot directory and its contents from the disk.
         public static bool DeleteSave(string slotName){
             if (string.IsNullOrEmpty(slotName)) return false;
             if (string.Equals(slotName, TempDirectoryName, StringComparison.OrdinalIgnoreCase)) return false;
-            if (Instance != null && string.Equals(slotName, Instance.defaultSaveTemplate, StringComparison.OrdinalIgnoreCase)) return false;
+            if (Instance != null) return false;
 
             _baseSavePath ??= Path.Combine(Application.persistentDataPath, "Saves");
             string targetDir = Path.Combine(_baseSavePath, slotName);
@@ -216,16 +198,13 @@ namespace BlackboardSaveSystem {
             return true;
         }
 
-        /// Gathers all save folders from disk and reconstructs their metadata, sorting newest first.
+        /// Gathers all save folders from the disk and reconstructs their metadata, sorting newest first.
         public static List<SaveFileMetadata> GetSaveFileList(){
             List<SaveFileMetadata> saveList = new();
 
             foreach (string dirPath in Directory.GetDirectories(_baseSavePath)){
                 string dirName = Path.GetFileName(dirPath);
-
-                if (string.Equals(dirName, TempDirectoryName,            StringComparison.OrdinalIgnoreCase)) continue;
-                if (string.Equals(dirName, Instance.defaultSaveTemplate, StringComparison.OrdinalIgnoreCase)) continue;
-
+                if (string.Equals(dirName, TempDirectoryName, StringComparison.OrdinalIgnoreCase)) continue;
                 saveList.Add(ReadMetadata(dirPath, dirName));
             }
 
@@ -271,28 +250,6 @@ namespace BlackboardSaveSystem {
         }
 
 #if UNITY_EDITOR
-        [ContextMenu("New Game")]
-        public void StartNewGame() => _ = OnStartSessionRequested?.Invoke(DefaultSaveTemplate);
-
-        [ContextMenu("Load")]
-        public void LoadNewGame() => _ = OnStartSessionRequested?.Invoke("TestSave");
-
-        [ContextMenu("Close")]
-        public void CloseSession() => _ = OnCloseSessionRequested?.Invoke();
-
-        [ContextMenu("Save")]
-        public void Save() => _ = SaveGame("TestSave");
-
-        [ContextMenu("Save Target Slot")]
-        public void SaveTargetSlot(){
-            if (string.IsNullOrWhiteSpace(targetSaveSlotName)){
-                Debug.LogWarning("[SaveSystem] Cannot save: TargetSaveSlotName is empty.");
-                return;
-            }
-            Debug.Log($"[SaveSystem] Saving current session to target slot: '{targetSaveSlotName}'");
-            _ = SaveGame(targetSaveSlotName);
-        }
-
         [ContextMenu("AutoSave")]
         public void AutoSave() => _ = AutosaveAsync();
 #endif
@@ -305,6 +262,7 @@ namespace BlackboardSaveSystem {
 
         public string                     slotName;
         public DateTime                   lastSaveTime;
+        [NonSerialized]
         public Dictionary<string, string> Variables;
 
         /// Initializes save slot metadata with a slot name, timestamp, and key-value variables.
